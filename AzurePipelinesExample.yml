@@ -1,0 +1,171 @@
+# ASP.NET Core
+# Build and test ASP.NET Core projects targeting .NET Core.
+# Add steps that run tests, create a NuGet package, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+- develop
+
+variables:
+  appServiceNameDEV: 'dev-myappmain'
+  # appServiceNameACC: 'acc-myappmain-api'
+  # appServiceNamePROD: 'myappmain-api'
+  backendSolution: 'myappMain.sln'
+  backendURLDEV: 'https://dev-my-app-api.azurewebsites.net/'
+
+stages:
+- stage: build
+  displayName: 'Build Application'
+  jobs:
+  - job: Build_Steps
+    pool:
+      vmImage: windows-latest
+
+    variables:
+      buildConfiguration: 'Release'
+
+    steps:
+    - task: AzureKeyVault@1
+      inputs:
+        azureSubscription: 'PROD_SUBSCRIPTION (00000000-0000-aaaa-cccc-111111000000)'
+        KeyVaultName: 'dev-myapp-kv'
+        SecretsFilter: 'myappClientId, myappMainClientSecret'
+        RunAsPreJob: false
+        
+    - task: DotNetCoreCLI@2
+      displayName: Restore
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+        feedsToUse: 'select'
+
+    - task: DotNetCoreCLI@2
+      displayName: Build
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+
+    - task: DotNetCoreCLI@2
+      displayName: Test
+      inputs:
+        command: 'test'
+        projects: '**/*[Tt]ests/*.csproj'
+        arguments: '--configuration $(BuildConfiguration) --collect "Code coverage"'
+
+    - task: DotNetCoreCLI@2
+      displayName: Publish
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration $(BuildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact' 
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+- stage: deploy_DEV
+  displayName: 'Deploy Development'
+  dependsOn: ['build']
+  jobs:
+  - deployment: Deploy_Development
+    displayName: 'Waiting for review and approval'
+    pool:
+      vmImage: windows-latest
+    environment: My_Pipelines
+  - job: Deploy_Steps
+    displayName: 'Deploy application to Development'
+    # pool:
+    #   vmImage: windows-latest
+
+    steps:
+    - task: DownloadBuildArtifacts@0
+      displayName: 'Download Published Artifact'
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'drop'
+        downloadPath: '$(System.ArtifactsDirectory)'
+        
+    - task: AzureKeyVault@1
+      inputs:
+        azureSubscription: 'PROD_SUBSCRIPTION (00000000-0000-aaaa-cccc-111111000000)'
+        KeyVaultName: 'dev-myapp-kv'
+        SecretsFilter: 'myappClientId, myappMainClientSecret'
+        RunAsPreJob: false
+
+    - task: AzureRmWebAppDeployment@4
+      displayName: 'Deploy'
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'PROD_SUBSCRIPTION (00000000-0000-aaaa-cccc-111111000000)'
+        appType: 'webApp'
+        WebAppName: $(appServiceNameDEV)
+        packageForLinux: '$(Build.ArtifactStagingDirectory)/**/*.zip'
+        JSONFiles: 'appsettings.Development.json'   
+
+# - stage: deploy_ACC
+#   displayName: 'Deploy Acceptance'
+#   dependsOn: ['build', deploy_DEV]
+#   jobs:
+#   - deployment: Deploy_Acceptance
+#     displayName: 'Waiting for review and approval'
+#     pool:
+#       vmImage: windows-latest
+#     environment: My_Pipelines
+#   - job: Deploy_Steps
+#     displayName: 'Deploy application to Acceptance'
+#     # pool:
+#     #   vmImage: windows-latest
+
+#     steps:
+#     - task: DownloadBuildArtifacts@0
+#       displayName: 'Download Published Artifact'
+#       inputs:
+#         buildType: 'current'
+#         downloadType: 'single'
+#         artifactName: 'drop'
+#         downloadPath: '$(System.ArtifactsDirectory)'
+#     - task: AzureRmWebAppDeployment@4
+#       displayName: 'Deploy'
+#       inputs:
+#         ConnectionType: 'AzureRM'
+#         azureSubscription: 'DEV_SUBSCRIPTION (00000000-0000-aaaa-cccc-111111000000)'
+#         appType: 'webApp'
+#         WebAppName: $(appServiceNameACC)
+#         packageForLinux: '$(Build.ArtifactStagingDirectory)/**/*.zip'
+#         JSONFiles: 'appsettings.Acceptance.json'    
+    
+# - stage: deploy_PROD
+#   displayName: 'Deploy Production'
+#   dependsOn: ['build']
+#   jobs:
+#   - deployment: Deploy_Production
+#     displayName: 'Waiting for review and approval'
+#     pool:
+#       vmImage: windows-latest
+#     environment: My_Pipelines
+#   - job: Deploy_Steps
+#     displayName: 'Deploy application to Production'
+#     # pool:
+#     #   vmImage: windows-latest
+
+#     steps:
+#     - task: DownloadBuildArtifacts@0
+#       displayName: 'Download Published Artifact'
+#       inputs:
+#         buildType: 'current'
+#         downloadType: 'single'
+#         artifactName: 'drop'
+#         downloadPath: '$(System.ArtifactsDirectory)'
+#     - task: AzureRmWebAppDeployment@4
+#       displayName: 'Deploy'
+#       inputs:
+#         ConnectionType: 'AzureRM'
+#         azureSubscription: 'PROD_SUBSCRIPTION (00000000-0000-aaaa-cccc-111111000000)'
+#         appType: 'webApp'
+#         WebAppName: $(appServiceNamePROD)
+#         packageForLinux: '$(Build.ArtifactStagingDirectory)/**/*.zip'
+#         JSONFiles: 'appsettings.Production.json'   
